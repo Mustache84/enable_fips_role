@@ -1,0 +1,15 @@
+---
+
+- hosts: "{{group_name_fips}}"
+  gather_facts: true
+  vars_files:
+    - environment/{{env}}/main.yml
+
+- hosts: "{{group_name_fips}}"
+  vars_files:
+    - environment/{{env}}/main.yml
+    - environment/{{env}}/es_users.yml
+
+  serial: 1
+  roles:
+    - fips

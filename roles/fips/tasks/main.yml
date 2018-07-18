@@ -1,0 +1,29 @@
+---
+
+- name: Check if FIPS is enabled
+  command: cat /proc/sys/crypto/fips_enabled
+  register: fips_check
+
+- debug:
+    msg: "FIPS mode is already enabled. Skipping this machine"
+  when: (fips_check.stdout == "1")
+
+# Include is deprecating, import_tasks is the new module
+- include_tasks: fips.yml
+  when:
+    (fips_check.stdout == "0") and
+    ( (group_name_elahot not in group_names) and
+    (group_name_elawrm not in group_names) and
+    (group_name_kibana not in group_names) and
+    (group_name_elamrv not in group_names) and
+    (group_name_elamst not in group_names) )
+
+- include_tasks: fips-es.yml
+  when:
+    (fips_check.stdout == "0") and
+    ( (group_name_elahot in group_names) or
+    (group_name_elawrm in group_names) or
+    (group_name_kibana in group_names) or
+    (group_name_elamrv in group_names) or
+    (group_name_elamst in group_names) )
+

@@ -1,0 +1,86 @@
+---
+
+- set_fact:
+    boot_device: '{{ ansible_mounts | selectattr("mount", "equalto", "/boot") | map(attribute="uuid") | join(",") }}'
+
+- name: Install FIPS Packages
+  yum:
+    name: "{{item}}"
+    state: latest
+  with_items:
+    - dracut-fips
+    - dracut-fips-aesni
+
+
+- name: Regenerate initramfs file
+  command: dracut -v -f
+
+
+- name: Enalbe FIPS in Grub config
+  lineinfile:
+    path: /etc/default/grub
+    backrefs: yes
+    state: present
+    regexp: '^(GRUB_CMDLINE_LINUX=(?!.*fips)\"[^\"]+)(\".*)'
+    line: '\1 fips=1\2'
+  register: fips
+
+# During testing, found that this is not needed for AWS ans /boot and grub are on same partition.
+# Running this causes AWS to fail.
+#- name: Set BOOT in Grub config
+#  lineinfile:
+#    path: /etc/default/grub
+#    backrefs: yes
+#    state: present
+#    regexp: '^(GRUB_CMDLINE_LINUX=(?!.*boot)\"[^\"]+)(\".*)'
+#    line: '\1 boot=UUID={{boot_device}}\2'
+#  register: grub
+
+- name: Rebuild the Grub.cfg
+  command: grub2-mkconfig -o /etc/grub2.cfg
+
+- name: Commit files to disk
+  command: sync
+
+- name: check if pelican puller service exists
+  stat:
+    path: /etc/systemd/system/pelican-puller.service
+  register: pelpul_service_check
+  # when host is a syslog server
+  when: (group_name_syslog in group_names)
+
+- name: stop pelican_puller
+  systemd:
+    name: pelican-puller
+    state: stopped
+    enabled: yes
+  # when a syslog server and pelican puller service exists
+  when: (group_name_syslog in group_names) and
+        (pelpul_service_check.stat.exists == true)
+
+- name: wait for empty queue
+  command: syslog-ng-ctl stats
+  register: stats_output
+  until: stats_output.stdout|regex_findall('(d_(raven|elastic).*queued;[1-9][0-9]*)') == []
+  retries: 240
+  delay: 10
+  # when a syslog server and pelican puller service exists
+  when: (group_name_syslog in group_names) and
+        (pelpul_service_check.stat.exists == true)
+
+- name: Reboot the server to enable FIPS changes
+  command: /sbin/shutdown -r
+  async: 0
+  poll: 0
+  ignore_errors: true
+
+- name: Wait for the server to finish rebooting
+  local_action: wait_for host={{ inventory_hostname }} state=started port=22 delay=65 timeout=300
+  become: no
+
+- name: Check if FIPS is enabled
+  command: cat /proc/sys/crypto/fips_enabled
+  register: fips_confirm
+
+- debug:
+    msg: "{{fips_confirm}}"
